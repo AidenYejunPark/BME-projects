@@ -1,0 +1,135 @@
+clear; clc; close all;
+
+%% Load
+load('C:\Users\june0\Downloads\ADHD200_CPM_D_network_strength.mat');
+
+%% Recalculate regression coefficients
+coef_pos  = polyfit(positive_strength, behavior, 1);
+coef_neg  = polyfit(negative_strength, behavior, 1);
+coef_comb = polyfit(combined_strength, behavior, 1);
+
+pred_pos  = polyval(coef_pos, positive_strength);
+pred_neg  = polyval(coef_neg, negative_strength);
+pred_comb = polyval(coef_comb, combined_strength);
+
+Rpos  = corrcoef(pred_pos, behavior);
+Rneg  = corrcoef(pred_neg, behavior);
+Rcomb = corrcoef(pred_comb, behavior);
+
+SSres_pos = sum((behavior-pred_pos).^2);
+SSres_neg = sum((behavior-pred_neg).^2);
+SSres_comb = sum((behavior-pred_comb).^2);
+
+SStot = sum((behavior-mean(behavior)).^2);
+
+R2_pos  = 1 - SSres_pos/SStot;
+R2_neg  = 1 - SSres_neg/SStot;
+R2_comb = 1 - SSres_comb/SStot;
+
+%% Figure
+figure('Color','w','Position',[100 100 1500 500]);
+
+tiledlayout(1,3,'TileSpacing','compact','Padding','compact');
+
+%% Positive
+nexttile
+
+scatter(positive_strength, behavior, 22, 'filled', ...
+    'MarkerFaceAlpha',0.35);
+hold on
+
+xfit = linspace(min(positive_strength), max(positive_strength), 100);
+yfit = polyval(coef_pos, xfit);
+
+plot(xfit, yfit, 'LineWidth',2);
+
+xlabel('Positive Network Strength');
+ylabel('Inattentive Score');
+title('Positive Network Model');
+
+txt = sprintf(['y = %.4fx %+.4f\n' ...
+               'r = %.4f\n' ...
+               'R^2 = %.4f'], ...
+               coef_pos(1), coef_pos(2), ...
+               Rpos(1,2), R2_pos);
+
+text(0.05,0.95,txt, ...
+    'Units','normalized', ...
+    'VerticalAlignment','top', ...
+    'FontSize',11, ...
+    'BackgroundColor','w');
+
+grid on
+box off
+
+
+%% Negative
+nexttile
+
+scatter(negative_strength, behavior, 22, 'filled', ...
+    'MarkerFaceAlpha',0.35);
+hold on
+
+xfit = linspace(min(negative_strength), max(negative_strength), 100);
+yfit = polyval(coef_neg, xfit);
+
+plot(xfit, yfit, 'LineWidth',2);
+
+xlabel('Negative Network Strength');
+ylabel('Inattentive Score');
+title('Negative Network Model');
+
+txt = sprintf(['y = %.4fx %+.4f\n' ...
+               'r = %.4f\n' ...
+               'R^2 = %.4f'], ...
+               coef_neg(1), coef_neg(2), ...
+               Rneg(1,2), R2_neg);
+
+text(0.05,0.95,txt, ...
+    'Units','normalized', ...
+    'VerticalAlignment','top', ...
+    'FontSize',11, ...
+    'BackgroundColor','w');
+
+grid on
+box off
+
+
+%% Combined
+nexttile
+
+scatter(combined_strength, behavior, 22, 'filled', ...
+    'MarkerFaceAlpha',0.35);
+hold on
+
+xfit = linspace(min(combined_strength), max(combined_strength), 100);
+yfit = polyval(coef_comb, xfit);
+
+plot(xfit, yfit, 'LineWidth',2);
+
+xlabel('Combined Network Strength');
+ylabel('Inattentive Score');
+title('Combined Model');
+
+txt = sprintf(['y = %.4fx %+.4f\n' ...
+               'r = %.4f\n' ...
+               'R^2 = %.4f'], ...
+               coef_comb(1), coef_comb(2), ...
+               Rcomb(1,2), R2_comb);
+
+text(0.05,0.95,txt, ...
+    'Units','normalized', ...
+    'VerticalAlignment','top', ...
+    'FontSize',11, ...
+    'BackgroundColor','w');
+
+grid on
+box off
+
+sgtitle('Network Strength vs. Inattentive Score', ...
+    'FontWeight','bold');
+
+%% Save
+exportgraphics(gcf, ...
+    'C:\Users\june0\Downloads\CPM_E_regression_visualization.png', ...
+    'Resolution',300);
