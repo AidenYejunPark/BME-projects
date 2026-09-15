@@ -1,0 +1,105 @@
+%% CPM Figure (e)
+% Linear Regression
+% Network Strength -> Inattentive_z
+
+clear; clc;
+
+%% Load network strength
+load('C:\Users\june0\Downloads\ADHD200_CPM_D_network_strength.mat');
+
+%% ----------------------------------
+%% Positive model
+%% ----------------------------------
+
+coef_pos = polyfit(positive_strength, behavior, 1);
+
+pred_pos = polyval(coef_pos, positive_strength);
+
+Rpos = corrcoef(pred_pos, behavior);
+
+fprintf('\n====================================\n');
+fprintf('Positive Network Model\n');
+fprintf('====================================\n');
+
+fprintf('Slope     = %.4f\n',coef_pos(1));
+fprintf('Intercept = %.4f\n',coef_pos(2));
+
+fprintf('Prediction r = %.4f\n',Rpos(1,2));
+
+%% R^2
+SSres = sum((behavior-pred_pos).^2);
+SStot = sum((behavior-mean(behavior)).^2);
+
+R2_pos = 1-SSres/SStot;
+
+fprintf('R^2 = %.4f\n',R2_pos);
+
+%% ----------------------------------
+%% Negative model
+%% ----------------------------------
+
+coef_neg = polyfit(negative_strength, behavior, 1);
+
+pred_neg = polyval(coef_neg, negative_strength);
+
+Rneg = corrcoef(pred_neg, behavior);
+
+fprintf('\n====================================\n');
+fprintf('Negative Network Model\n');
+fprintf('====================================\n');
+
+fprintf('Slope     = %.4f\n',coef_neg(1));
+fprintf('Intercept = %.4f\n',coef_neg(2));
+
+fprintf('Prediction r = %.4f\n',Rneg(1,2));
+
+SSres = sum((behavior-pred_neg).^2);
+SStot = sum((behavior-mean(behavior)).^2);
+
+R2_neg = 1-SSres/SStot;
+
+fprintf('R^2 = %.4f\n',R2_neg);
+
+%% ----------------------------------
+%% Combined model
+%% ----------------------------------
+
+coef_comb = polyfit(combined_strength, behavior,1);
+
+pred_comb = polyval(coef_comb,combined_strength);
+
+Rcomb = corrcoef(pred_comb,behavior);
+
+fprintf('\n====================================\n');
+fprintf('Combined Model\n');
+fprintf('====================================\n');
+
+fprintf('Slope     = %.4f\n',coef_comb(1));
+fprintf('Intercept = %.4f\n',coef_comb(2));
+
+fprintf('Prediction r = %.4f\n',Rcomb(1,2));
+
+SSres = sum((behavior-pred_comb).^2);
+SStot = sum((behavior-mean(behavior)).^2);
+
+R2_comb = 1-SSres/SStot;
+
+fprintf('R^2 = %.4f\n',R2_comb);
+
+%% ----------------------------------
+%% Save
+%% ----------------------------------
+
+save(...
+'C:\Users\june0\Downloads\ADHD200_CPM_E_regression.mat',...
+'coef_pos',...
+'coef_neg',...
+'coef_comb',...
+'pred_pos',...
+'pred_neg',...
+'pred_comb',...
+'R2_pos',...
+'R2_neg',...
+'R2_comb');
+
+fprintf('\nSaved regression model.\n');
