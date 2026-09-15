@@ -1,0 +1,292 @@
+%% CPM Figure (b) + (c)
+
+% (b) Correlate each FC edge with Inattentive_z
+% (c) Select significantly correlated edges
+% Statistics Toolbox NOT required
+
+clear; clc;
+
+%% 1) Set file paths
+
+fc_file = ...
+'C:\Users\june0\Downloads\ADHD200_Athena_CC200_FC.mat';
+
+z_file = ...
+'C:\Users\june0\Downloads\ADHD200_Athena_CC200_final_subjects_z.csv';
+
+%% 2) Load FC data
+
+load(fc_file, ...
+    'FC_all', ...
+    'subject_ID');
+
+[nROI1, nROI2, N] = size(FC_all);
+
+if nROI1 ~= nROI2
+    error('FC matrices are not square.');
+end
+
+nROI = nROI1;
+
+fprintf('Subjects: %d\n', N);
+
+fprintf('FC size: %d x %d x %d\n', ...
+    nROI, nROI, N);
+
+%% 3) Load Inattentive_z scores
+
+T = readtable(z_file, ...
+    'VariableNamingRule','preserve');
+
+y = double(T.Inattentive_z(:));
+
+%% Check number of subjects
+
+if length(y) ~= N
+    error('Number of behavioral scores does not match FC subjects.');
+end
+
+fprintf('Behavior: Inattentive_z\n');
+
+fprintf('Mean = %.5f\n', mean(y));
+
+fprintf('SD   = %.5f\n', std(y));
+
+%% 4) Select unique edges
+
+% FC matrices are symmetric, so use only the upper triangle
+% Exclude diagonal elements
+
+upper_mask = triu(true(nROI),1);
+
+edge_index = find(upper_mask);
+
+nEdges = length(edge_index);
+
+fprintf('Unique edges: %d\n', nEdges);
+
+%% 5) Convert FC matrices to an edge matrix
+
+%
+% edge_data:
+%
+% rows    = edges
+% columns = subjects
+%
+% 17955 x 507
+%
+
+FC_2D = reshape(FC_all, nROI*nROI, N);
+
+edge_data = FC_2D(edge_index,:);
+
+fprintf('Edge data size: %d x %d\n', ...
+    size(edge_data,1), size(edge_data,2));
+
+%% =====================================================
+%% (b) Edge-wise Pearson correlation
+%% =====================================================
+
+%% Center behavioral scores
+
+y_centered = y - mean(y);
+
+%% Center edge values
+
+edge_mean = mean(edge_data,2);
+
+X_centered = edge_data - edge_mean;
+
+%% Pearson numerator
+
+numerator = X_centered * y_centered;
+
+%% Pearson denominator
+
+denominator = sqrt( ...
+    sum(X_centered.^2,2) .* ...
+    sum(y_centered.^2));
+
+%% r-values
+
+r_edges = numerator ./ denominator;
+
+%% Handle invalid or constant edges
+
+bad_edges = ~isfinite(r_edges);
+
+if any(bad_edges)
+
+    fprintf('Invalid/constant edges: %d\n', sum(bad_edges));
+
+    r_edges(bad_edges) = 0;
+
+end
+
+%% =====================================================
+%% Calculate p-values
+%% =====================================================
+
+df = N - 2;
+
+% Numerical stability
+
+r_safe = max(min(r_edges,0.999999999), ...
+             -0.999999999);
+
+t_edges = r_safe .* sqrt( ...
+    df ./ (1-r_safe.^2));
+
+% Two-sided p-value
+
+p_edges = betainc( ...
+    df ./ (df + t_edges.^2), ...
+    df/2, ...
+    0.5);
+
+%% 6) Create 190 x 190 R and P matrices
+
+R = zeros(nROI,nROI);
+
+P = ones(nROI,nROI);
+
+R(edge_index) = r_edges;
+
+P(edge_index) = p_edges;
+
+% Make R symmetric
+
+R = R + R';
+
+P_upper = P;
+
+P = ones(nROI,nROI);
+
+P(edge_index) = p_edges;
+
+P = min(P,P');
+
+% Set diagonal values
+
+R(1:nROI+1:end) = 0;
+
+P(1:nROI+1:end) = 1;
+
+%% =====================================================
+%% (c) Significant edge selection
+%% =====================================================
+
+p_threshold = 0.01;
+
+%% Positive network
+
+positive_edges = ...
+    (p_edges < p_threshold) & ...
+    (r_edges > 0);
+
+%% Negative network
+
+negative_edges = ...
+    (p_edges < p_threshold) & ...
+    (r_edges < 0);
+
+n_positive = sum(positive_edges);
+
+n_negative = sum(negative_edges);
+
+fprintf('\n====================================\n');
+
+fprintf('CPM Figure (b) + (c)\n');
+
+fprintf('====================================\n');
+
+fprintf('Edges tested: %d\n', nEdges);
+
+fprintf('Threshold: p < %.3f\n', p_threshold);
+
+fprintf('\nPositive edges: %d\n', ...
+    n_positive);
+
+fprintf('Negative edges: %d\n', ...
+    n_negative);
+
+fprintf('Total selected edges: %d\n', ...
+    n_positive + n_negative);
+
+fprintf('\nr range: %.4f to %.4f\n', ...
+    min(r_edges), max(r_edges));
+
+fprintf('Minimum p: %.10f\n', ...
+    min(p_edges));
+
+fprintf('====================================\n');
+
+%% 7) Create 190 x 190 positive and negative masks
+
+positive_mask = false(nROI,nROI);
+
+negative_mask = false(nROI,nROI);
+
+positive_mask(edge_index(positive_edges)) = true;
+
+negative_mask(edge_index(negative_edges)) = true;
+
+% Make masks symmetric
+
+positive_mask = positive_mask | positive_mask';
+
+negative_mask = negative_mask | negative_mask';
+
+%% 8) Check strongest edges
+
+[~,pos_idx] = max(r_edges);
+
+[~,neg_idx] = min(r_edges);
+
+[pos_i,pos_j] = ind2sub( ...
+    [nROI nROI], ...
+    edge_index(pos_idx));
+
+[neg_i,neg_j] = ind2sub( ...
+    [nROI nROI], ...
+    edge_index(neg_idx));
+
+fprintf('\nStrongest positive edge:\n');
+
+fprintf('ROI %d - ROI %d\n',pos_i,pos_j);
+
+fprintf('r = %.4f\n',r_edges(pos_idx));
+
+fprintf('p = %.10f\n',p_edges(pos_idx));
+
+fprintf('\nStrongest negative edge:\n');
+
+fprintf('ROI %d - ROI %d\n',neg_i,neg_j);
+
+fprintf('r = %.4f\n',r_edges(neg_idx));
+
+fprintf('p = %.10f\n',p_edges(neg_idx));
+
+%% 9) Save results
+
+output_file = ...
+'C:\Users\june0\Downloads\ADHD200_CPM_BC_zscore.mat';
+
+save(output_file, ...
+    'R', ...
+    'P', ...
+    'r_edges', ...
+    'p_edges', ...
+    'edge_index', ...
+    'positive_edges', ...
+    'negative_edges', ...
+    'positive_mask', ...
+    'negative_mask', ...
+    'p_threshold', ...
+    'subject_ID', ...
+    'y', ...
+    'N', ...
+    'nROI', ...
+    'nEdges');
+
+fprintf('\nSaved:\n%s\n',output_file);
