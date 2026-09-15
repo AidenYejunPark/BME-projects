@@ -1,0 +1,208 @@
+%% STEP 2. Athena CC200 time series -> FC matrices
+
+clear; clc;
+
+%% 1) Set file paths
+data_root = 'C:\Users\june0\Downloads\ADHD200_CC200_TCs_filtfix';
+
+matched_file = ...
+    'C:\Users\june0\Downloads\ADHD200_Athena_Inattentive_matched.csv';
+
+%% 2) Load Step 1 results
+T = readtable(matched_file, ...
+    'VariableNamingRule','preserve');
+
+fprintf('Matched subjects loaded: %d\n', height(T));
+
+%% 3) Basic settings
+nROI = 190;
+
+FC_all = nan(nROI, nROI, height(T));
+
+subject_ID = nan(height(T),1);
+inattentive = nan(height(T),1);
+
+used_file = strings(height(T),1);
+used_site = strings(height(T),1);
+
+valid_subject = false(height(T),1);
+
+%% 4) Process each subject
+for i = 1:height(T)
+
+    id = T.("ScanDir ID")(i);
+    site = string(T.AthenaSite(i));
+
+    % Subject folder name
+    id_string = sprintf('%07d', id);
+
+    subject_folder = fullfile( ...
+        data_root, ...
+        char(site), ...
+        id_string);
+
+    %% Check whether the folder exists
+    if ~isfolder(subject_folder)
+        fprintf('Folder missing: ID %d (%s)\n', id, site);
+        continue
+    end
+
+    %% 5) Find filtered + rest_1 + CC200 time-course file
+    files = dir(fullfile( ...
+        subject_folder, ...
+        'sfnwmrda*_rest_1_cc200_TCs.1D'));
+
+    %% Fallback
+    if isempty(files)
+        files = dir(fullfile( ...
+            subject_folder, ...
+            '*rest_1_cc200_TCs.1D'));
+    end
+
+    if isempty(files)
+        fprintf('No rest_1 CC200 file: ID %d (%s)\n', ...
+            id, site);
+        continue
+    end
+
+    filepath = fullfile(subject_folder, files(1).name);
+
+    %% 6) Read .1D file
+    try
+        opts = detectImportOptions(filepath, ...
+            'FileType','text', ...
+            'Delimiter','\t');
+
+        tbl = readtable(filepath, opts);
+
+        % First two columns:
+        % File, Sub-brick
+        %
+        % Remaining 190 columns:
+        % ROI time series
+        ts = table2array(tbl(:,3:end));
+
+    catch ME
+        fprintf('Could not read: %s\n', filepath);
+        fprintf('%s\n', ME.message);
+        continue
+    end
+
+    %% 7) Check data structure
+    % Expected format: timepoints x 190 ROIs
+    if size(ts,2) ~= nROI
+
+        % Check whether the data is transposed
+        if size(ts,1) == nROI
+            ts = ts';
+        else
+            fprintf('Unexpected size: ID %d | %d x %d\n', ...
+                id, size(ts,1), size(ts,2));
+            continue
+        end
+    end
+
+    %% Check for NaN values
+    if any(isnan(ts(:)))
+        fprintf('NaN in time series: ID %d\n', id);
+        continue
+    end
+
+    %% 8) Pearson correlation -> FC matrix
+    FC = corrcoef(ts);
+
+    %% Check FC matrix
+    if any(isnan(FC(:)))
+        fprintf('NaN in FC matrix: ID %d\n', id);
+        continue
+    end
+
+    %% Set diagonal elements to 1
+    FC(1:nROI+1:end) = 1;
+
+    %% 9) Store results
+    FC_all(:,:,i) = FC;
+
+    subject_ID(i) = id;
+    inattentive(i) = T.("Inattentive")(i);
+
+    used_file(i) = string(files(1).name);
+    used_site(i) = site;
+
+    valid_subject(i) = true;
+
+    %% Progress update
+    if mod(i,50) == 0
+        fprintf('Processed %d / %d subjects\n', ...
+            i, height(T));
+    end
+end
+
+%% 10) Keep only successfully processed subjects
+FC_all = FC_all(:,:,valid_subject);
+
+subject_ID = subject_ID(valid_subject);
+inattentive = inattentive(valid_subject);
+
+used_file = used_file(valid_subject);
+used_site = used_site(valid_subject);
+
+T_final = T(valid_subject,:);
+
+%% 11) Display results
+fprintf('\n====================================\n');
+fprintf('Final subjects with FC: %d\n', length(subject_ID));
+fprintf('FC matrix size: %d x %d x %d\n', ...
+    size(FC_all,1), ...
+    size(FC_all,2), ...
+    size(FC_all,3));
+fprintf('====================================\n');
+
+%% 12) Check the first 10 subjects
+disp(table( ...
+    subject_ID(1:min(10,end)), ...
+    inattentive(1:min(10,end)), ...
+    used_site(1:min(10,end)), ...
+    used_file(1:min(10,end)), ...
+    'VariableNames', ...
+    {'SubjectID','Inattentive','Site','File'}));
+
+%% 13) Sanity check
+if ~isempty(subject_ID)
+
+    fprintf('\nExample FC checks:\n');
+
+    fprintf('FC(1,2,1) = %.4f\n', ...
+        FC_all(1,2,1));
+
+    fprintf('Diagonal mean = %.4f\n', ...
+        mean(diag(FC_all(:,:,1))));
+
+    fprintf('Symmetry error = %.10f\n', ...
+        max(max(abs(FC_all(:,:,1) - FC_all(:,:,1)'))));
+end
+
+%% 14) Save MAT file
+output_mat = ...
+    'C:\Users\june0\Downloads\ADHD200_Athena_CC200_FC.mat';
+
+save(output_mat, ...
+    'FC_all', ...
+    'subject_ID', ...
+    'inattentive', ...
+    'used_file', ...
+    'used_site', ...
+    'T_final', ...
+    '-v7.3');
+
+fprintf('\nSaved FC matrices:\n%s\n', output_mat);
+
+%% 15) Save final subject CSV
+T_final.UsedFile = used_file;
+
+output_csv = ...
+    'C:\Users\june0\Downloads\ADHD200_Athena_CC200_final_subjects.csv';
+
+writetable(T_final, output_csv);
+
+fprintf('Saved subject list:\n%s\n', output_csv);
