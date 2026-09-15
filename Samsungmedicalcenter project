@@ -1,0 +1,107 @@
+%% STEP 1. ADHD-200 Phenotype - Athena CC200 Subject Matching
+
+clear; clc; 
+
+%% 1) Set file paths
+phenotype_file = 'C:\Users\june0\Downloads\ADHD200_phenotype_preproc.csv'; 
+
+data_root = 'C:\Users\june0\Downloads\ADHD200_CC200_TCs_filtfix'; 
+
+%% 2) Load phenotype data
+T = readtable(phenotype_file, ... 
+    'VariableNamingRule', 'preserve'); 
+
+disp(T.Properties.VariableNames); 
+
+%% 3) Keep only subjects that passed Athena QC
+T = T(T.("QC_Athena") == 1, :); 
+
+%% 4) Keep only valid Inattentive scores
+% -999 is treated as a missing value
+inatt = T.("Inattentive"); 
+
+T = T(~isnan(inatt) & inatt ~= -999, :); 
+
+fprintf('Subjects with valid QC_Athena and Inattentive scores: %d\n', height(T)); 
+
+%% 5) List of Athena QC-passed CC200 site folders
+sites = { 
+    'KKI' 
+    'NeuroIMAGE' 
+    'NYU' 
+    'OHSU' 
+    'Peking_1' 
+    'Peking_2' 
+    'Peking_3' 
+    'Pittsburgh' 
+    'WashU' 
+}; 
+
+%% 6) Collect actual Athena CC200 subject IDs
+
+cc200_ID = []; 
+cc200_site = strings(0,1); 
+
+for s = 1:length(sites) 
+
+    site_path = fullfile(data_root, sites{s}); 
+
+    folders = dir(site_path); 
+
+    % Keep directories only
+    folders = folders([folders.isdir]); 
+
+    % Remove . and ..
+    folders = folders(~ismember({folders.name}, {'.','..'})); 
+
+    for i = 1:length(folders) 
+
+        % Convert subject folder name to a number
+        id = str2double(folders(i).name); 
+
+        if ~isnan(id) 
+
+            cc200_ID(end+1,1) = id; 
+            cc200_site(end+1,1) = string(sites{s}); 
+
+        end 
+    end 
+end 
+
+fprintf('Athena CC200 subjects found: %d\n', length(cc200_ID)); 
+
+%% 7) Match phenotype ScanDir IDs with Athena CC200 IDs
+
+phenotype_ID = T.("ScanDir ID"); 
+
+[matched_ID, idx_pheno, idx_cc200] = intersect( ... 
+    phenotype_ID, ... 
+    cc200_ID, ... 
+    'stable'); 
+
+%% 8) Create the final matched phenotype table
+
+T_matched = T(idx_pheno, :); 
+
+% Add the actual Athena site information
+T_matched.AthenaSite = cc200_site(idx_cc200); 
+
+fprintf('Final matched subjects: %d\n', height(T_matched)); 
+
+%% 9) Check a subset of the results
+
+disp(T_matched(:, ... 
+    {'ScanDir ID', ... 
+     'Site', ... 
+     'Inattentive', ... 
+     'QC_Athena', ... 
+     'AthenaSite'})); 
+
+%% 10) Save the results
+
+output_file = ... 
+    'C:\Users\june0\Downloads\ADHD200_Athena_Inattentive_matched.csv'; 
+
+writetable(T_matched, output_file); 
+
+fprintf('\nSaved to: %s\n', output_file);
