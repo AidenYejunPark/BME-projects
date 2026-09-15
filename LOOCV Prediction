@@ -1,0 +1,456 @@
+%% CPM Figure (f) - LOOCV Prediction
+% ADHD-200 Athena CC200
+% Target: Inattentive
+%
+% For each left-out subject:
+%   1. Site-wise standardize behavior using TRAINING subjects only
+%   2. Edge-behavior correlation using training subjects
+%   3. Select edges at p < 0.01
+%   4. Calculate network strength
+%   5. Fit linear model
+%   6. Predict left-out subject 
+%
+% Statistics Toolbox NOT required
+
+clear; clc;
+
+%% =====================================================
+%% 1) Load data
+%% =====================================================
+
+fc_file = ...
+'C:\Users\june0\Downloads\ADHD200_Athena_CC200_FC.mat';
+
+subject_file = ...
+'C:\Users\june0\Downloads\ADHD200_Athena_CC200_final_subjects.csv';
+
+load(fc_file, ...
+    'FC_all', ...
+    'subject_ID');
+
+T = readtable(subject_file, ...
+    'VariableNamingRule','preserve');
+
+T.AthenaSite = string(T.AthenaSite);
+
+raw_behavior = double(T.("Inattentive")(:));
+sites = T.AthenaSite;
+
+[nROI,~,N] = size(FC_all);
+
+fprintf('Subjects = %d\n',N);
+fprintf('ROIs = %d\n',nROI);
+
+if height(T) ~= N
+    error('Subject table and FC data do not match.');
+end
+
+
+%% =====================================================
+%% 2) Extract unique FC edges
+%% =====================================================
+
+upper_mask = triu(true(nROI),1);
+
+edge_index = find(upper_mask);
+
+nEdges = length(edge_index);
+
+FC2 = reshape(FC_all,nROI*nROI,N);
+
+% 17955 x 507
+edge_data = FC2(edge_index,:);
+
+fprintf('Unique edges = %d\n',nEdges);
+
+
+%% =====================================================
+%% 3) Settings
+%% =====================================================
+
+p_threshold = 0.01;
+
+% prediction results
+pred_pos  = nan(N,1);
+pred_neg  = nan(N,1);
+pred_comb = nan(N,1);
+
+true_z = nan(N,1);
+
+% selected edge counts for every fold
+n_pos_fold = zeros(N,1);
+n_neg_fold = zeros(N,1);
+
+
+%% =====================================================
+%% 4) LOOCV
+%% =====================================================
+
+fprintf('\nStarting LOOCV...\n\n');
+
+for test = 1:N
+
+    %% -----------------------------------------
+    %% Training / test split
+    %% -----------------------------------------
+
+    train_idx = true(N,1);
+    train_idx(test) = false;
+
+    Xtrain = edge_data(:,train_idx);
+
+    Xtest = edge_data(:,test);
+
+    y_raw_train = raw_behavior(train_idx);
+    site_train = sites(train_idx);
+
+    test_site = sites(test);
+
+
+    %% -----------------------------------------
+    %% A. Site-wise behavior standardization
+    %% TRAINING DATA ONLY
+    %% -----------------------------------------
+
+    y_train = nan(N-1,1);
+
+    unique_train_sites = unique(site_train);
+
+    test_mu = NaN;
+    test_sd = NaN;
+
+    for s = 1:length(unique_train_sites)
+
+        site = unique_train_sites(s);
+
+        idx_site = (site_train == site);
+
+        temp_y = y_raw_train(idx_site);
+
+        mu = mean(temp_y);
+        sd = std(temp_y);
+
+        if sd == 0
+            sd = 1;
+        end
+
+        y_train(idx_site) = ...
+            (temp_y - mu) ./ sd;
+
+        % Save parameters for left-out subject's site
+        if site == test_site
+            test_mu = mu;
+            test_sd = sd;
+        end
+
+    end
+
+    if isnan(test_mu)
+        error('Test subject site not found in training data.');
+    end
+
+    %% True standardized test behavior
+    % Used only to evaluate prediction later
+
+    true_z(test) = ...
+        (raw_behavior(test) - test_mu) ./ test_sd;
+
+
+    %% -----------------------------------------
+    %% B. Edge-wise correlation
+    %% training subjects ONLY
+    %% -----------------------------------------
+
+    y_centered = y_train - mean(y_train);
+
+    X_mean = mean(Xtrain,2);
+
+    X_centered = Xtrain - X_mean;
+
+    numerator = ...
+        X_centered * y_centered;
+
+    denominator = sqrt( ...
+        sum(X_centered.^2,2) .* ...
+        sum(y_centered.^2));
+
+    r_edges = numerator ./ denominator;
+
+    bad = ~isfinite(r_edges);
+
+    r_edges(bad) = 0;
+
+
+    %% -----------------------------------------
+    %% Calculate p-values
+    %% -----------------------------------------
+
+    nTrain = sum(train_idx);
+
+    df = nTrain - 2;
+
+    r_safe = max( ...
+        min(r_edges,0.999999999), ...
+        -0.999999999);
+
+    t_edges = ...
+        r_safe .* sqrt( ...
+        df ./ (1-r_safe.^2));
+
+    p_edges = betainc( ...
+        df ./ (df+t_edges.^2), ...
+        df/2, ...
+        0.5);
+
+
+    %% -----------------------------------------
+    %% C. Edge selection
+    %% -----------------------------------------
+
+    positive_edges = ...
+        (p_edges < p_threshold) & ...
+        (r_edges > 0);
+
+    negative_edges = ...
+        (p_edges < p_threshold) & ...
+        (r_edges < 0);
+
+    n_pos_fold(test) = sum(positive_edges);
+    n_neg_fold(test) = sum(negative_edges);
+
+
+    %% -----------------------------------------
+    %% D. Network strength
+    %% -----------------------------------------
+
+    % Training subjects
+
+    pos_train = ...
+        sum(Xtrain(positive_edges,:),1)';
+
+    neg_train = ...
+        sum(Xtrain(negative_edges,:),1)';
+
+    comb_train = ...
+        pos_train - neg_train;
+
+
+    % Left-out subject
+
+    pos_test = ...
+        sum(Xtest(positive_edges));
+
+    neg_test = ...
+        sum(Xtest(negative_edges));
+
+    comb_test = ...
+        pos_test - neg_test;
+
+
+    %% -----------------------------------------
+    %% E/F. Fit training model + predict test
+    %% -----------------------------------------
+
+    % ---------- Positive model ----------
+
+    if std(pos_train) > 0
+
+        B = [ones(nTrain,1) pos_train] \ y_train;
+
+        pred_pos(test) = ...
+            [1 pos_test] * B;
+
+    else
+
+        pred_pos(test) = mean(y_train);
+
+    end
+
+
+    % ---------- Negative model ----------
+
+    if std(neg_train) > 0
+
+        B = [ones(nTrain,1) neg_train] \ y_train;
+
+        pred_neg(test) = ...
+            [1 neg_test] * B;
+
+    else
+
+        pred_neg(test) = mean(y_train);
+
+    end
+
+
+    % ---------- Combined model ----------
+
+    if std(comb_train) > 0
+
+        B = [ones(nTrain,1) comb_train] \ y_train;
+
+        pred_comb(test) = ...
+            [1 comb_test] * B;
+
+    else
+
+        pred_comb(test) = mean(y_train);
+
+    end
+
+
+    %% Progress
+    if mod(test,50) == 0 || test == N
+
+        fprintf( ...
+            'LOOCV %d / %d | pos edges = %d | neg edges = %d\n', ...
+            test, ...
+            N, ...
+            n_pos_fold(test), ...
+            n_neg_fold(test));
+
+    end
+
+end
+
+
+%% =====================================================
+%% 5) Evaluate predictions
+%% =====================================================
+
+Rpos = corrcoef(pred_pos,true_z);
+Rneg = corrcoef(pred_neg,true_z);
+Rcomb = corrcoef(pred_comb,true_z);
+
+r_pos = Rpos(1,2);
+r_neg = Rneg(1,2);
+r_comb = Rcomb(1,2);
+
+
+%% RMSE
+
+rmse_pos = sqrt(mean((pred_pos-true_z).^2));
+rmse_neg = sqrt(mean((pred_neg-true_z).^2));
+rmse_comb = sqrt(mean((pred_comb-true_z).^2));
+
+
+%% MAE
+
+mae_pos = mean(abs(pred_pos-true_z));
+mae_neg = mean(abs(pred_neg-true_z));
+mae_comb = mean(abs(pred_comb-true_z));
+
+
+%% Cross-validated R²
+
+SStot = sum((true_z-mean(true_z)).^2);
+
+R2_pos = ...
+    1 - sum((true_z-pred_pos).^2)/SStot;
+
+R2_neg = ...
+    1 - sum((true_z-pred_neg).^2)/SStot;
+
+R2_comb = ...
+    1 - sum((true_z-pred_comb).^2)/SStot;
+
+
+%% =====================================================
+%% 6) Results
+%% =====================================================
+
+fprintf('\n');
+fprintf('========================================\n');
+fprintf('CPM FIGURE (f) - LOOCV COMPLETE\n');
+fprintf('========================================\n');
+
+fprintf('\nPositive model\n');
+fprintf('Prediction r = %.4f\n',r_pos);
+fprintf('CV R^2       = %.4f\n',R2_pos);
+fprintf('RMSE         = %.4f\n',rmse_pos);
+fprintf('MAE          = %.4f\n',mae_pos);
+
+fprintf('\nNegative model\n');
+fprintf('Prediction r = %.4f\n',r_neg);
+fprintf('CV R^2       = %.4f\n',R2_neg);
+fprintf('RMSE         = %.4f\n',rmse_neg);
+fprintf('MAE          = %.4f\n',mae_neg);
+
+fprintf('\nCombined model\n');
+fprintf('Prediction r = %.4f\n',r_comb);
+fprintf('CV R^2       = %.4f\n',R2_comb);
+fprintf('RMSE         = %.4f\n',rmse_comb);
+fprintf('MAE          = %.4f\n',mae_comb);
+
+fprintf('\nSelected edges across folds\n');
+
+fprintf('Positive edges: mean %.1f, range %d-%d\n', ...
+    mean(n_pos_fold), ...
+    min(n_pos_fold), ...
+    max(n_pos_fold));
+
+fprintf('Negative edges: mean %.1f, range %d-%d\n', ...
+    mean(n_neg_fold), ...
+    min(n_neg_fold), ...
+    max(n_neg_fold));
+
+fprintf('========================================\n');
+
+
+%% =====================================================
+%% 7) Save results
+%% =====================================================
+
+output_mat = ...
+'C:\Users\june0\Downloads\ADHD200_CPM_F_LOOCV.mat';
+
+save(output_mat, ...
+    'pred_pos', ...
+    'pred_neg', ...
+    'pred_comb', ...
+    'true_z', ...
+    'subject_ID', ...
+    'n_pos_fold', ...
+    'n_neg_fold', ...
+    'r_pos', ...
+    'r_neg', ...
+    'r_comb', ...
+    'R2_pos', ...
+    'R2_neg', ...
+    'R2_comb', ...
+    'rmse_pos', ...
+    'rmse_neg', ...
+    'rmse_comb', ...
+    'mae_pos', ...
+    'mae_neg', ...
+    'mae_comb', ...
+    'p_threshold');
+
+fprintf('\nSaved MAT:\n%s\n',output_mat);
+
+
+%% CSV
+
+Result = table( ...
+    subject_ID, ...
+    true_z, ...
+    pred_pos, ...
+    pred_neg, ...
+    pred_comb, ...
+    n_pos_fold, ...
+    n_neg_fold, ...
+    'VariableNames', ...
+    {'SubjectID', ...
+     'True_Inattentive_z', ...
+     'Predicted_Positive', ...
+     'Predicted_Negative', ...
+     'Predicted_Combined', ...
+     'PositiveEdges', ...
+     'NegativeEdges'});
+
+output_csv = ...
+'C:\Users\june0\Downloads\ADHD200_CPM_F_LOOCV.csv';
+
+writetable(Result,output_csv);
+
+fprintf('Saved CSV:\n%s\n',output_csv);
